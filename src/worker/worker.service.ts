@@ -26,17 +26,48 @@ export class WorkerService {
     const payload = job.data;
     const messageData = payload.data || payload;
     
-    // Extrair ID do contato WhatsApp
-    const whatsappContactId = messageData.key?.remoteJid || messageData.from || messageData.to;
+    // Extrair dados do WhatsApp
+    const whatsappChatId = messageData.key?.remoteJid || messageData.from || messageData.to;
+    const senderPhone = messageData.key?.participant || messageData.key?.remoteJid || messageData.from;
     const contactName = messageData.pushName || messageData.notifyName || 'Desconhecido';
+    const isFromMe = messageData.key?.fromMe || false;
+    const instanceId = messageData.instanceId || payload.instanceId || 'default';
+    
+    // Buscar ou criar usuário (sender)
+    let senderId = null;
+    if (senderPhone) {
+      const { data: existingUser } = await this.supabase
+        .from('users')
+        .select('id')
+        .eq('phone', senderPhone)
+        .single();
+      
+      if (existingUser) {
+        senderId = existingUser.id;
+      } else {
+        // Criar novo usuário
+        const { data: newUser } = await this.supabase
+          .from('users')
+          .insert([{
+            name: contactName,
+            phone: senderPhone,
+            email: `${senderPhone.replace(/\D/g, '')}@whatsapp.temp`,
+            role: isFromMe ? 'agent' : 'customer'
+          }])
+          .select('id')
+          .single();
+        
+        senderId = newUser?.id;
+      }
+    }
     
     // Buscar ou criar conversa
     let conversationId = null;
-    if (whatsappContactId) {
+    if (whatsappChatId) {
       const { data: existingConversation } = await this.supabase
         .from('conversations')
         .select('id')
-        .eq('whatsapp_contact_id', whatsappContactId)
+        .eq('whatsapp_chat_id', whatsappChatId)
         .single();
       
       if (existingConversation) {
@@ -46,23 +77,44 @@ export class WorkerService {
         const { data: newConversation } = await this.supabase
           .from('conversations')
           .insert([{
-            whatsapp_contact_id: whatsappContactId,
-            contact_name: contactName
+            title: `Chat ${contactName}`,
+            type: 'support',
+            whatsapp_chat_id: whatsappChatId,
+            evolution_instance_id: instanceId,
+            created_by: senderId
           }])
           .select('id')
           .single();
         
         conversationId = newConversation?.id;
+        
+        // Adicionar participante à conversa
+        if (conversationId && senderId) {
+          await this.supabase
+            .from('conversation_participants')
+            .insert([{
+              conversation_id: conversationId,
+              user_id: senderId,
+              role: isFromMe ? 'admin' : 'member'
+            }]);
+        }
       }
     }
     
-    // Mapear campos conforme estrutura da EvolutionAPI
+    // Determinar tipo de mensagem
+    const messageType = this.getMessageType(messageData);
+    const messageContent = this.extractMessageContent(messageData);
+    
+    // Mapear campos para o novo schema
     const messageToSave = {
-      content: messageData,
-      sender: messageData.key?.fromMe ? 'bot' : 'user',
-      status: messageData.status || 'received',
-      supabase_message_id: messageData.key?.id || messageData.id,
+      content: messageContent,
+      msg_type: messageType,
+      msg_status: messageData.status || 'delivered',
+      whatsapp_message_id: messageData.key?.id || messageData.id,
+      evolution_message_id: messageData.key?.id || messageData.id,
       conversation_id: conversationId,
+      sender_id: senderId,
+      metadata: messageData
     };
 
     const { data, error } = await this.supabase
@@ -74,5 +126,45 @@ export class WorkerService {
     } else {
       console.log('Message saved to Supabase:', data);
     }
+  }
+
+  private getMessageType(messageData: any): string {
+    // Determinar tipo de mensagem baseado na estrutura da EvolutionAPI
+    if (messageData.message?.imageMessage) return 'image';
+    if (messageData.message?.videoMessage) return 'video';
+    if (messageData.message?.audioMessage || messageData.message?.pttMessage) return 'audio';
+    if (messageData.message?.documentMessage) return 'file';
+    if (messageData.message?.locationMessage) return 'location';
+    if (messageData.message?.contactMessage) return 'contact';
+    if (messageData.messageType === 'system') return 'system';
+    return 'text';
+  }
+
+  private extractMessageContent(messageData: any): string {
+    // Extrair conteúdo baseado no tipo de mensagem
+    const message = messageData.message || messageData;
+    
+    // Texto simples
+    if (message.conversation) return message.conversation;
+    if (message.extendedTextMessage?.text) return message.extendedTextMessage.text;
+    if (messageData.text) return messageData.text;
+    if (messageData.body) return messageData.body;
+    
+    // Mídia com caption
+    if (message.imageMessage?.caption) return message.imageMessage.caption;
+    if (message.videoMessage?.caption) return message.videoMessage.caption;
+    if (message.documentMessage?.caption) return message.documentMessage.caption;
+    
+    // Outros tipos
+    if (message.locationMessage) {
+      return `Localização: ${message.locationMessage.degreesLatitude}, ${message.locationMessage.degreesLongitude}`;
+    }
+    
+    if (message.contactMessage) {
+      return `Contato: ${message.contactMessage.displayName || message.contactMessage.vcard}`;
+    }
+    
+    // Fallback para mensagens sem texto
+    return '[Mídia]';
   }
 }
