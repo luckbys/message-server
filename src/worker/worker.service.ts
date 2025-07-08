@@ -22,9 +22,52 @@ export class WorkerService {
   async processMessage(job: Job<any>) {
     console.log('Processing message:', job.data);
 
+    // Extrair dados do payload da EvolutionAPI
+    const payload = job.data;
+    const messageData = payload.data || payload;
+    
+    // Extrair ID do contato WhatsApp
+    const whatsappContactId = messageData.key?.remoteJid || messageData.from || messageData.to;
+    const contactName = messageData.pushName || messageData.notifyName || 'Desconhecido';
+    
+    // Buscar ou criar conversa
+    let conversationId = null;
+    if (whatsappContactId) {
+      const { data: existingConversation } = await this.supabase
+        .from('conversations')
+        .select('id')
+        .eq('whatsapp_contact_id', whatsappContactId)
+        .single();
+      
+      if (existingConversation) {
+        conversationId = existingConversation.id;
+      } else {
+        // Criar nova conversa
+        const { data: newConversation } = await this.supabase
+          .from('conversations')
+          .insert([{
+            whatsapp_contact_id: whatsappContactId,
+            contact_name: contactName
+          }])
+          .select('id')
+          .single();
+        
+        conversationId = newConversation?.id;
+      }
+    }
+    
+    // Mapear campos conforme estrutura da EvolutionAPI
+    const messageToSave = {
+      content: messageData,
+      sender: messageData.key?.fromMe ? 'bot' : 'user',
+      status: messageData.status || 'received',
+      supabase_message_id: messageData.key?.id || messageData.id,
+      conversation_id: conversationId,
+    };
+
     const { data, error } = await this.supabase
       .from('messages')
-      .insert([{ content: job.data }]);
+      .insert([messageToSave]);
 
     if (error) {
       console.error('Error saving message to Supabase:', error);
