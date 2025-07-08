@@ -28,37 +28,62 @@ export class WorkerService {
     
     // Extrair dados do WhatsApp
     const whatsappChatId = messageData.key?.remoteJid || messageData.from || messageData.to;
-    const senderPhone = messageData.key?.participant || messageData.key?.remoteJid || messageData.from;
+    const senderPhone = messageData.key?.remoteJid || messageData.from || messageData.sender;
     const contactName = messageData.pushName || messageData.notifyName || 'Desconhecido';
     const isFromMe = messageData.key?.fromMe || false;
     const instanceId = messageData.instanceId || payload.instanceId || 'default';
     
+    console.log('Dados extraídos:', {
+      whatsappChatId,
+      senderPhone,
+      contactName,
+      isFromMe,
+      instanceId
+    });
+    
     // Buscar ou criar usuário (sender)
     let senderId = null;
     if (senderPhone) {
+      console.log('Buscando usuário com telefone:', senderPhone);
       const { data: existingUser } = await this.supabase
         .from('users')
         .select('id')
         .eq('phone', senderPhone)
         .single();
       
+      console.log('Usuário existente encontrado:', existingUser);
+      
       if (existingUser) {
         senderId = existingUser.id;
       } else {
         // Criar novo usuário
+        const newUserData = {
+          name: contactName,
+          phone: senderPhone,
+          email: `${senderPhone.replace(/\D/g, '')}@whatsapp.temp`,
+          role: isFromMe ? 'agent' : 'customer'
+        };
+        console.log('Criando novo usuário:', newUserData);
+        
         const { data: newUser } = await this.supabase
           .from('users')
-          .insert([{
-            name: contactName,
-            phone: senderPhone,
-            email: `${senderPhone.replace(/\D/g, '')}@whatsapp.temp`,
-            role: isFromMe ? 'agent' : 'customer'
-          }])
+          .insert([newUserData])
           .select('id')
           .single();
         
+        console.log('Novo usuário criado:', newUser);
         senderId = newUser?.id;
       }
+    } else {
+      console.error('ERRO: senderPhone não foi extraído corretamente do payload');
+    }
+    
+    console.log('senderId final:', senderId);
+    
+    // Verificar se senderId foi definido
+    if (!senderId) {
+      console.error('ERRO CRÍTICO: senderId é null, não é possível salvar mensagem');
+      throw new Error('Não foi possível determinar o sender_id da mensagem');
     }
     
     // Buscar ou criar conversa
