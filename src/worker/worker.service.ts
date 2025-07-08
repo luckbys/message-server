@@ -44,12 +44,19 @@ export class WorkerService {
     // Buscar ou criar usuário (sender)
     let senderId = null;
     if (senderPhone) {
-      console.log('Buscando usuário com telefone:', senderPhone);
-      const { data: existingUser } = await this.supabase
+      // Limpar telefone para busca consistente
+      const cleanPhone = senderPhone.replace('@s.whatsapp.net', '');
+      
+      console.log('Buscando usuário com telefone:', cleanPhone);
+      const { data: existingUser, error: searchError } = await this.supabase
         .from('users')
         .select('id')
-        .eq('phone', senderPhone)
+        .eq('phone', cleanPhone)
         .single();
+      
+      if (searchError && searchError.code !== 'PGRST116') {
+        console.error('Erro ao buscar usuário:', searchError);
+      }
       
       console.log('Usuário existente encontrado:', existingUser);
       
@@ -57,22 +64,50 @@ export class WorkerService {
         senderId = existingUser.id;
       } else {
         // Criar novo usuário
+        const safeEmail = `user_${cleanPhone.replace(/\D/g, '')}@temp.whatsapp`;
+        
         const newUserData = {
           name: contactName,
-          phone: senderPhone,
-          email: `${senderPhone.replace(/\D/g, '')}@whatsapp.temp`,
+          phone: cleanPhone,
+          email: safeEmail,
           role: isFromMe ? 'agent' : 'customer'
         };
         console.log('Criando novo usuário:', newUserData);
         
-        const { data: newUser } = await this.supabase
+        const { data: newUser, error } = await this.supabase
           .from('users')
           .insert([newUserData])
           .select('id')
           .single();
         
+        if (error) {
+          console.error('Erro ao criar usuário:', error);
+          
+          // Tentar uma abordagem mais simples se falhar
+          console.log('Tentando criar usuário com dados mínimos...');
+          const minimalUserData = {
+            name: contactName || 'Usuário WhatsApp',
+            email: `temp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}@whatsapp.local`,
+            phone: cleanPhone
+          };
+          
+          const { data: fallbackUser, error: fallbackError } = await this.supabase
+            .from('users')
+            .insert([minimalUserData])
+            .select('id')
+            .single();
+          
+          if (fallbackError) {
+            console.error('Erro mesmo com dados mínimos:', fallbackError);
+            throw new Error(`Falha ao criar usuário: ${fallbackError.message}`);
+          }
+          
+          senderId = fallbackUser?.id;
+        } else {
+          senderId = newUser?.id;
+        }
+        
         console.log('Novo usuário criado:', newUser);
-        senderId = newUser?.id;
       }
     } else {
       console.error('ERRO: senderPhone não foi extraído corretamente do payload');
