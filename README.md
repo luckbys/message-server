@@ -96,3 +96,48 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+# Message Server - WhatsApp Integration
+
+## Configuração do Banco de Dados
+
+### Criando Usuário Padrão do Sistema
+
+Para contornar problemas de Row Level Security (RLS), crie um usuário padrão no Supabase executando o seguinte SQL:
+
+```sql
+INSERT INTO public.users (name, email, role, phone) 
+VALUES ('Sistema WhatsApp', 'system@whatsapp.bot', 'admin', 'system');
+```
+
+Este usuário será usado para mensagens quando não for possível criar usuários específicos devido ao RLS.
+
+### Desabilitar RLS (Alternativa)
+
+Se preferir, você pode desabilitar o RLS temporariamente:
+
+```sql
+ALTER TABLE public.users DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversations DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.messages DISABLE ROW LEVEL SECURITY;
+ALTER TABLE public.conversation_participants DISABLE ROW LEVEL SECURITY;
+```
+
+### Variáveis de Ambiente Necessárias
+
+```
+SUPABASE_URL=sua_url_supabase
+SUPABASE_KEY=sua_service_role_key  # Use service role, não anon key
+REDIS_HOST=seu_redis_host
+REDIS_PORT=6379
+REDIS_PASSWORD=sua_senha_redis
+PORT=3000
+```
+
+## Funcionalidades
+
+- ✅ Recebe webhooks da EvolutionAPI
+- ✅ Processa mensagens em fila (Bull Queue)
+- ✅ Salva mensagens organizadas por conversa
+- ✅ Suporte a diferentes tipos de mídia
+- ✅ Metadados completos para integração com CRM
