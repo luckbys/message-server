@@ -24,7 +24,7 @@ export class WorkerService {
 
     const { data, error } = await this.supabase
       .from('messages')
-      .insert([{ data: job.data }]);
+      .insert([{ content: job.data }]);
 
     if (error) {
       console.error('Error saving message to Supabase:', error);
