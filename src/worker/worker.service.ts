@@ -79,9 +79,40 @@ export class WorkerService {
           console.log('Usando usuário padrão do sistema:', systemUser.id);
           senderId = systemUser.id;
         } else {
-          console.log('Usuário padrão não encontrado - criando entrada na conversa sem usuário específico');
-          // Vamos salvar a mensagem com dados mínimos no metadata
-          senderId = null; // Vamos permitir null temporariamente
+          console.log('Usuário padrão não encontrado - tentando criar automaticamente...');
+          
+          // Tentar criar usuário padrão automaticamente
+          const { data: newSystemUser, error: systemError } = await this.supabase
+            .from('users')
+            .insert([{
+              name: 'Sistema WhatsApp',
+              email: 'system@whatsapp.bot',
+              role: 'admin',
+              phone: 'system'
+            }])
+            .select('id')
+            .single();
+          
+          if (systemError) {
+            console.error('Erro ao criar usuário padrão:', systemError);
+            // Fallback: buscar qualquer usuário admin existente
+            const { data: anyAdmin } = await this.supabase
+              .from('users')
+              .select('id')
+              .eq('role', 'admin')
+              .limit(1)
+              .single();
+            
+            if (anyAdmin) {
+              console.log('Usando primeiro admin encontrado:', anyAdmin.id);
+              senderId = anyAdmin.id;
+            } else {
+              throw new Error('Nenhum usuário disponível no sistema. Crie um usuário manualmente no Supabase.');
+            }
+          } else {
+            console.log('Usuário padrão criado com sucesso:', newSystemUser.id);
+            senderId = newSystemUser.id;
+          }
         }
       }
     } else {
@@ -90,9 +121,10 @@ export class WorkerService {
     
     console.log('senderId final:', senderId);
     
-    // Se não conseguiu definir senderId, vamos salvar como mensagem do sistema
+    // Verificação final - senderId deve sempre existir
     if (!senderId) {
-      console.log('Salvando mensagem sem sender específico - dados no metadata');
+      console.error('ERRO CRÍTICO: senderId ainda é null após todas as tentativas');
+      throw new Error('Não foi possível determinar um sender_id válido para a mensagem');
     }
     
     // Buscar ou criar conversa
